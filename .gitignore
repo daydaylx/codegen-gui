@@ -1,0 +1,17 @@
+# __pycache__ ignorieren
+__pycache__/
+*.pyc
+
+# Virtuelle Umgebung (optional)
+.venv/
+
+# Logs & temporäre Dateien
+*.log
+debug.log
+
+# Editor/IDE-Spezifisches
+.vscode/
+.idea/
+
+# User-Konfig-Datei
+~/.codegen_gui_config.json
