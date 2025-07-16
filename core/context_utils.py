@@ -15,3 +15,16 @@ except ImportError:
 
 def is_prompt_within_limit(user_prompt: str, system_prompt: str = "", model: str = "gpt-3.5-turbo", limit: int = 8192) -> bool:
     return count_tokens(user_prompt, system_prompt, model) <= limit
+
+def get_available_output_tokens(user_prompt, system_prompt, model_id):
+    from api.openrouter import get_model_metadata
+    from core.tokenizer import count_tokens  # oder dein Tokenizer-Modul
+
+    meta = get_model_metadata(model_id)
+    context_limit = meta.get("context_length", 4096)
+
+    input_tokens = count_tokens(user_prompt) + count_tokens(system_prompt or "")
+    buffer = 64  # Sicherheitsabstand
+    max_output_tokens = max(context_limit - input_tokens - buffer, 256)
+
+    return max_output_tokens

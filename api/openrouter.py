@@ -1,52 +1,65 @@
-# openrouter.py – API mit Lazy-Key und optionaler Fehlerklasse
+import requests
+import json
+from core.settings_manager import load_settings
 
-import httpx
-from config import get_api_key
-from core.prompt_builder import build_prompt
-
-BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 class OpenRouterAPIError(Exception):
-    """Benutzerdefinierter Fehler für OpenRouter-Probleme."""
     pass
 
-def get_headers():
-    api_key = get_api_key()
-    if not api_key:
+def get_models():
+    API_KEY = load_settings().get("api_key", "")
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    response = requests.get(OPENROUTER_MODELS_URL, headers=headers)
+
+    if response.status_code != 200:
+        raise OpenRouterAPIError(f"Modelle konnten nicht geladen werden: {response.status_code} {response.text}")
+
+    return response.json()["data"]
+
+def get_model_metadata(model_id):
+    models = get_models()
+    for model in models:
+        if model["id"] == model_id:
+            return model
+    return {}
+
+def generate_code_streaming(prompt, model, system_prompt="", max_tokens=None):
+    API_KEY = load_settings().get("api_key", "")
+    if not API_KEY:
         raise OpenRouterAPIError("❌ Kein API-Key gesetzt. Bitte in den Einstellungen eingeben.")
 
-    return {
-        "Authorization": f"Bearer " + api_key,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost",
-        "X-Title": "CodeGen GUI"
+    from core.context_utils import get_available_output_tokens
+    if max_tokens is None:
+        max_tokens = get_available_output_tokens(prompt, system_prompt, model)
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
     }
 
-def get_models():
-    try:
-        response = httpx.get(f"{BASE_URL}/models", headers=get_headers(), timeout=10)
-        response.raise_for_status()
-        return response.json()["data"]
-    except httpx.HTTPError as e:
-        raise OpenRouterAPIError(f"Fehler beim Laden der Modelle: {e}")
+    messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+    messages.append({"role": "user", "content": prompt})
 
-def generate_code(user_prompt, model, system_prompt="", max_tokens=2048, temperature=0.3, stop=None):
     payload = {
         "model": model,
-        "messages": build_prompt(user_prompt, system_prompt),
-        "max_tokens": max_tokens,
-        "temperature": temperature
+        "messages": messages,
+        "stream": True,
+        "max_tokens": max_tokens
     }
 
-    if stop:
-        payload["stop"] = stop
+    response = requests.post(OPENROUTER_CHAT_URL, headers=headers, json=payload, stream=True)
 
-    try:
-        response = httpx.post(f"{BASE_URL}/chat/completions", headers=get_headers(), json=payload, timeout=60)
-        response.raise_for_status()
-        choices = response.json().get("choices", [])
-        if not choices:
-            raise OpenRouterAPIError("Keine Antwort vom Modell erhalten.")
-        return choices[0]["message"]["content"]
-    except httpx.HTTPError as e:
-        raise OpenRouterAPIError(f"Fehler bei Anfrage: {e}")
+    if response.status_code != 200:
+        raise OpenRouterAPIError(f"Fehler bei Anfrage: {response.status_code} {response.text}")
+
+    for line in response.iter_lines():
+        if line:
+            try:
+                if line.startswith(b"data: "):
+                    line_data = json.loads(line[6:].decode("utf-8"))
+                    content = line_data["choices"][0]["delta"].get("content", "")
+                    yield content
+            except Exception:
+                continue

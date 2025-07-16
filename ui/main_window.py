@@ -1,32 +1,39 @@
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QLabel, QPushButton, QLineEdit, QCheckBox, QFrame,
-    QMessageBox, QStatusBar
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QLineEdit, QFrame, QFileDialog, QSplitter, QMessageBox, QStatusBar,
+    QCheckBox, QSpinBox
 )
 from PySide6.QtCore import Qt
-
+from PySide6.QtGui import QFont
 from ui.components.model_dropdown import ModelDropdown
-from ui.components.model_filter_widget import ModelFilterWidget
 from ui.components.prompt_input import PromptInput
 from ui.components.code_output import CodeOutput
-
 from core.file_utils import save_text_to_file, copy_to_clipboard
 from core.settings_manager import load_settings, save_settings
-from core.context_utils import is_prompt_within_limit
-from api.openrouter import generate_code
+from core.context_utils import is_prompt_within_limit, get_available_output_tokens
+from api.openrouter import generate_code_streaming
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("💻 CodeGen Pro")
         self.setMinimumSize(1200, 800)
-        self.setStyleSheet(open("style_dark.qss").read())
+
+        # Theme laden
+        with open("style_dark.qss", "r") as f:
+            self.setStyleSheet(f.read())
 
         self.settings = load_settings()
 
-        # Layout
+        # Main Layout
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
+
+        # === Sidebar Toggle ===
+        self.sidebar_visible = True
+        self.sidebar_toggle = QPushButton("☰")
+        self.sidebar_toggle.setFixedWidth(30)
+        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
 
         # === Sidebar ===
         self.sidebar = QFrame()
@@ -40,20 +47,21 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(QLabel("API-Key"))
         sidebar_layout.addWidget(self.api_input)
 
-        self.model_filter = ModelFilterWidget()
-        sidebar_layout.addWidget(self.model_filter)
-
         self.model_dropdown = ModelDropdown()
         sidebar_layout.addWidget(QLabel("Modell"))
         sidebar_layout.addWidget(self.model_dropdown)
 
-        # Verbindung Filter → Dropdown
-        self.model_filter.filter_changed.connect(self.model_dropdown.set_filters)
+        # Expertenmodus
+        self.expert_toggle = QCheckBox("🛠️ Expertenmodus")
+        self.expert_toggle.setChecked(False)
+        self.expert_toggle.stateChanged.connect(self.toggle_expert_mode)
+        self.max_token_box = QSpinBox()
+        self.max_token_box.setRange(256, 32000)
+        self.max_token_box.setValue(4000)
+        self.max_token_box.setVisible(False)
 
-        self.theme_toggle = QCheckBox("🌗 Dark Mode")
-        self.theme_toggle.setChecked(self.settings.get("theme") == "dark")
-        self.theme_toggle.stateChanged.connect(self.toggle_theme)
-        sidebar_layout.addWidget(self.theme_toggle)
+        sidebar_layout.addWidget(self.expert_toggle)
+        sidebar_layout.addWidget(self.max_token_box)
 
         sidebar_layout.addStretch()
 
@@ -61,11 +69,8 @@ class MainWindow(QMainWindow):
         self.generate_button.clicked.connect(self.on_generate)
         sidebar_layout.addWidget(self.generate_button)
 
-        main_layout.addWidget(self.sidebar)
-
         # === Content Bereich ===
         content_frame = QFrame()
-        content_frame.setObjectName("Content")
         content_layout = QVBoxLayout(content_frame)
 
         self.prompt_input = PromptInput()
@@ -77,13 +82,29 @@ class MainWindow(QMainWindow):
         splitter.setSizes([350, 450])
 
         content_layout.addWidget(splitter)
-        main_layout.addWidget(content_frame)
 
-        # === Statusbar ===
+        # === Full Layout Zusammensetzen ===
+        layout_wrapper = QVBoxLayout()
+        top_row = QHBoxLayout()
+        top_row.addWidget(self.sidebar_toggle)
+        top_row.addStretch()
+        layout_wrapper.addLayout(top_row)
+        body_row = QHBoxLayout()
+        body_row.addWidget(self.sidebar)
+        body_row.addWidget(content_frame)
+        layout_wrapper.addLayout(body_row)
+        main_widget.setLayout(layout_wrapper)
+
+        # Statusbar
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
-
         self.setCentralWidget(main_widget)
+
+    def toggle_sidebar(self):
+        self.sidebar.setVisible(not self.sidebar.isVisible())
+
+    def toggle_expert_mode(self, state):
+        self.max_token_box.setVisible(state == Qt.Checked)
 
     def on_generate(self):
         model = self.model_dropdown.get_selected_model()
@@ -102,18 +123,19 @@ class MainWindow(QMainWindow):
         self.settings["last_model"] = model
         save_settings(self.settings)
 
-        self.statusBar().showMessage("⏳ Anfrage wird gesendet …")
+        self.code_output.set_output("")
+        self.statusBar().showMessage("⏳ Generierung läuft …")
 
         try:
-            result = generate_code(user_prompt, model, system_prompt)
-            self.code_output.set_output(result)
-            self.statusBar().showMessage("✅ Antwort erhalten.")
+            if self.expert_toggle.isChecked():
+                max_tokens = self.max_token_box.value()
+            else:
+                max_tokens = get_available_output_tokens(user_prompt, system_prompt, model)
+
+            for chunk in generate_code_streaming(user_prompt, model, system_prompt, max_tokens):
+                self.code_output.append_output(chunk)
+
+            self.statusBar().showMessage("✅ Fertig.")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", str(e))
-            self.statusBar().showMessage("❌ Anfrage fehlgeschlagen.")
-
-    def toggle_theme(self):
-        theme = "dark" if self.theme_toggle.isChecked() else "light"
-        self.settings["theme"] = theme
-        save_settings(self.settings)
-        QMessageBox.information(self, "Theme gewechselt", "Bitte Anwendung neu starten für Theme-Wechsel.")
+            self.statusBar().showMessage("❌ Fehler.")
