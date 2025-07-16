@@ -1,62 +1,75 @@
 import requests
-import sseclient
-from config import get_api_key
+import json # Neu hinzugefügt
 
 class OpenRouterAPIError(Exception):
+    """Benutzerdefinierte Ausnahme für OpenRouter API-Fehler."""
     pass
 
-def get_models():
-    api_key = get_api_key()
-    headers = {
-        "Authorization": f"Bearer " + api_key,
-        "HTTP-Referer": "https://localhost",
-        "X-Title": "CodeGen GUI"
-    }
-    response = requests.get("https://openrouter.ai/api/v1/models", headers=headers)
-    if response.status_code != 200:
-        raise OpenRouterAPIError(f"Modelle konnten nicht geladen werden: {response.text}")
-    return response.json()["data"]
-
-def generate_code_streaming(user_prompt: str, model: str, system_prompt: str = "", max_tokens: int = 1024):
-    api_key = get_api_key()
+def get_available_models(api_key: str) -> list[dict]:
+    """Ruft die Liste der verfügbaren Modelle von der OpenRouter API ab."""
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://localhost",  # Ihre Anwendungs-URL
+        "X-Title": "CodeGen GUI",  # Ihr Anwendungsname
+    }
+    try:
+        response = requests.get("https://openrouter.ai/api/v1/models", headers=headers)
+        response.raise_for_status()  # Löst HTTPError für Bad Responses (4xx oder 5xx) aus
+        return response.json()['data']
+    except requests.exceptions.RequestException as e:
+        raise OpenRouterAPIError(f"Netzwerk- oder API-Fehler beim Abrufen der Modelle: {e}")
+
+def generate_code_streaming(model: str, user_prompt: str, system_prompt: str, api_key: str, max_tokens: int, temperature: float = 0.7):
+    """Generiert Code über die OpenRouter API mit Streaming."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://localhost",
-        "X-Title": "CodeGen GUI"
+        "X-Title": "CodeGen GUI",
     }
 
-    body = {
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_prompt})
+
+    data = {
         "model": model,
+        "messages": messages,
         "stream": True,
         "max_tokens": max_tokens,
-        "temperature": 0.7,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
+        "temperature": temperature,
     }
 
-    response = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers=headers,
-        json=body,
-        stream=True
-    )
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=data,
+            stream=True
+        )
+        response.raise_for_status()
 
-    if response.status_code != 200:
-        raise OpenRouterAPIError(f"Fehler bei Anfrage: {response.status_code} - {response.text}")
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8')
+                if decoded_line.startswith('data: '):
+                    json_data = decoded_line[len('data: '):].strip()
+                    if json_data == '[DONE]':
+                        break
+                    try:
+                        # SICHERHEITSFIX: json.loads() anstelle von eval() verwenden
+                        event = json.loads(json_data)
+                        if 'choices' in event and event['choices']:
+                            delta = event['choices'][0]['delta']
+                            if 'content' in delta:
+                                yield delta['content']
+                    except json.JSONDecodeError as e:
+                        # Dies kann bei unvollständigen JSON-Zeilen passieren, was bei Streaming normal ist
+                        # oder bei tatsächlichen Fehlern. Zum Debuggen kann ein print hier hilfreich sein.
+                        # print(f"Fehler beim Decodieren von JSON-Stream-Chunk: {e} in Zeile: {json_data}")
+                        continue # Überspringen Sie fehlerhafte JSON-Zeilen
+    except requests.exceptions.RequestException as e:
+        raise OpenRouterAPIError(f"Netzwerk- oder API-Fehler: {e}")
 
-    client = sseclient.SSEClient(response)
-    for event in client.events():
-        if event.data.strip() == "[DONE]":
-            break
-        try:
-            data = event.data
-            chunk = eval(data)  # OpenRouter sendet rohes JSON – eval = quick & dirty (kann ersetzt werden)
-            content = chunk["choices"][0]["delta"].get("content", "")
-            if content:
-                yield content
-        except Exception as e:
-            continue  # Ignoriere fehlerhafte Chunks

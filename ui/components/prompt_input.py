@@ -1,67 +1,56 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QPushButton, QFrame, QProgressBar, QSizePolicy
+    QWidget, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QPushButton, QFrame, QSizePolicy
 )
-from PySide6.QtCore import Signal, Qt
-from core.context_utils import count_tokens
+from PySide6.QtCore import Signal, Qt # count_tokens Import entfernt
 
 class PromptInput(QWidget):
+    # prompt_changed Signal bleibt erhalten, da andere Teile der UI darauf reagieren könnten.
+    # Für die Token-Anzeige im Hauptfenster sind die direkten Verbindungen zum textChanged-Signal in MainWindow ausreichend.
     prompt_changed = Signal()
 
     def __init__(self):
         super().__init__()
-        self.user_prompt = QTextEdit()
-        self.user_prompt.setPlaceholderText("Was soll generiert werden?")
-        self.user_prompt.setStyleSheet(self._style())
-        self.user_prompt.textChanged.connect(self._on_text_changed)
+        self.user_prompt_input = QTextEdit() # Umbenannt von user_prompt, um Konflikte zu vermeiden und Klarheit zu schaffen
+        self.user_prompt_input.setPlaceholderText("Was soll generiert werden?")
+        self.user_prompt_input.setStyleSheet(self._style())
+        self.user_prompt_input.textChanged.connect(self._on_text_changed) # Signal für Änderungen am Text
 
-        self.system_prompt = QTextEdit()
-        self.system_prompt.setPlaceholderText("Systemprompt (optional)")
-        self.system_prompt.setStyleSheet(self._style())
-        self.system_prompt.setVisible(False)  # standardmäßig ausgeblendet
+        self.system_prompt_input = QTextEdit() # Umbenannt von system_prompt
+        self.system_prompt_input.setPlaceholderText("Systemprompt (optional)")
+        self.system_prompt_input.setStyleSheet(self._style())
+        self.system_prompt_input.setVisible(False)  # standardmäßig ausgeblendet
+        self.system_prompt_input.textChanged.connect(self._on_text_changed) # Auch für System-Prompt Änderungen
 
         self.toggle_button = QPushButton("🧠 Systemprompt anzeigen")
         self.toggle_button.clicked.connect(self._toggle_system_prompt)
 
-        self.token_bar = QProgressBar()
-        self.token_bar.setRange(0, 8192)
-        self.token_bar.setFormat("Tokens: %v")
-        self.token_bar.setValue(0)
-        self.token_bar.setTextVisible(True)
-        self.token_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #333;
-                border-radius: 4px;
-                background: #222;
-                color: #ccc;
-            }
-            QProgressBar::chunk {
-                background-color: #05B8CC;
-            }
-        """)
+        # Token-Balken aus PromptInput entfernt, da er jetzt in MainWindow verwaltet wird
+        # self.token_bar = QProgressBar()
+        # ... (zugehöriger Code entfernt)
 
         layout = QVBoxLayout()
         layout.addWidget(QLabel("📥 Eingabe-Prompt"))
-        layout.addWidget(self.user_prompt)
+        layout.addWidget(self.user_prompt_input)
         layout.addWidget(self.toggle_button)
-        layout.addWidget(self.system_prompt)
-        layout.addWidget(self.token_bar)
+        layout.addWidget(self.system_prompt_input)
+        # layout.addWidget(self.token_bar) # Token-Balken entfernt
         self.setLayout(layout)
 
     def _toggle_system_prompt(self):
-        visible = not self.system_prompt.isVisible()
-        self.system_prompt.setVisible(visible)
+        visible = not self.system_prompt_input.isVisible() # Nutzt den umbenannten Namen
+        self.system_prompt_input.setVisible(visible)
         self.toggle_button.setText("🔒 Systemprompt verbergen" if visible else "🧠 Systemprompt anzeigen")
 
     def _on_text_changed(self):
-        tokens = count_tokens(self.get_user_prompt(), self.get_system_prompt())
-        self.token_bar.setValue(tokens)
+        # Die Token-Zählung und -Anzeige wird jetzt zentral in MainWindow.py verwaltet.
+        # Dieses Signal dient dazu, MainWindow über Änderungen zu informieren.
         self.prompt_changed.emit()
 
     def get_user_prompt(self):
-        return self.user_prompt.toPlainText()
+        return self.user_prompt_input.toPlainText()
 
     def get_system_prompt(self):
-        return self.system_prompt.toPlainText()
+        return self.system_prompt_input.toPlainText()
 
     def _style(self):
         return """

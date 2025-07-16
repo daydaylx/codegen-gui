@@ -1,20 +1,30 @@
-def count_tokens(prompt: str, system: str = "") -> int:
-    # Sehr einfache Token-Schätzung: ca. 1 Token pro 4 Zeichen
-    return int((len(prompt) + len(system)) / 4)
+import json
+import os
 
-def is_prompt_within_limit(prompt: str, system: str, model_id: str) -> bool:
-    return count_tokens(prompt, system) < get_model_max_tokens(model_id)
+# Pfad zur Modellliste (Annahme: relativ zu diesem Skript)
+_SCRIPT_DIR = os.path.dirname(__file__)
+_MODEL_LISTING_PATH = os.path.join(_SCRIPT_DIR, '..', 'openrouter_models_complete_listing.json')
 
-def get_available_output_tokens(prompt: str, system: str, model_id: str) -> int:
-    used = count_tokens(prompt, system)
-    return get_model_max_tokens(model_id) - used
+_MODELS_DATA = {}
+if os.path.exists(_MODEL_LISTING_PATH):
+    try:
+        with open(_MODEL_LISTING_PATH, 'r', encoding='utf-8') as f:
+            _MODELS_DATA = {model['id']: model for model in json.load(f)}
+    except Exception as e:
+        print(f"Fehler beim Laden der Modellliste aus {_MODEL_LISTING_PATH}: {e}")
+else:
+    print(f"Modellliste nicht gefunden: {_MODEL_LISTING_PATH}. Kontextlängen können ungenau sein.")
+
 
 def get_model_max_tokens(model_id: str) -> int:
-    MODEL_LIMITS = {
-        "openai/gpt-3.5-turbo": 4096,
-        "openai/gpt-4": 8192,
-        "openrouter/auto": 4096,
-    }
+    """
+    Gibt die maximale Tokenanzahl für ein gegebenes Modell zurück.
+    Lädt die Kontextlänge aus der openrouter_models_complete_listing.json.
+    """
+    model_info = _MODELS_DATA.get(model_id)
+    if model_info:
+        return model_info.get('context_length', 4096) # Standardwert 4096, falls nicht gefunden
+    return 4096 # Standardwert, wenn Modell nicht gefunden wird
 
-    # Fallback-Wert, wenn Modell nicht bekannt ist
-    return MODEL_LIMITS.get(model_id, 4096)
+# Die Funktion count_tokens ist aufgrund ihrer Ungenauigkeit entfernt, da keine präzise Tokenizer-Bibliothek (z.B. tiktoken) integriert ist.
+# Für eine genauere Token-Zählung müsste eine entsprechende Bibliothek hinzugefügt werden.

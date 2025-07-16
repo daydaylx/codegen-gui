@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 
 echo "🚀 Starte $APP_NAME ..."
 
-# Falls virtuelle Umgebung existiert → aktivieren
+# Falls virtuelle Umgebung existiert → aktiviere
 if [[ -d "$VENV_DIR" ]]; then
     echo "📦 Aktiviere virtuelle Umgebung ..."
     source "$VENV_DIR/bin/activate"
@@ -17,7 +17,8 @@ if [[ -d "$VENV_DIR" ]]; then
 fi
 
 # Prüfen ob Abhängigkeiten installiert sind
-REQUIRED_MODULES=("PySide6" "httpx" "pygments")
+# 'httpx' wurde durch 'requests' ersetzt
+REQUIRED_MODULES=("PySide6" "requests" "pygments")
 MISSING=false
 
 for module in "${REQUIRED_MODULES[@]}"; do
