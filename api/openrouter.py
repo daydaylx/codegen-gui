@@ -1,54 +1,62 @@
 import requests
-import json
-from core.settings_manager import load_settings
+import sseclient
+from config import get_api_key
 
 class OpenRouterAPIError(Exception):
     pass
 
-BASE_URL = "https://openrouter.ai/api/v1"
+def get_models():
+    api_key = get_api_key()
+    headers = {
+        "Authorization": f"Bearer " + api_key,
+        "HTTP-Referer": "https://localhost",
+        "X-Title": "CodeGen GUI"
+    }
+    response = requests.get("https://openrouter.ai/api/v1/models", headers=headers)
+    if response.status_code != 200:
+        raise OpenRouterAPIError(f"Modelle konnten nicht geladen werden: {response.text}")
+    return response.json()["data"]
 
-def get_headers():
-    settings = load_settings()
-    api_key = settings.get("api_key", "")
-    if not api_key:
-        raise ValueError("❌ Kein API-Key gesetzt. Bitte in den Einstellungen eingeben.")
-    return {
+def generate_code_streaming(user_prompt: str, model: str, system_prompt: str = "", max_tokens: int = 1024):
+    api_key = get_api_key()
+    headers = {
         "Authorization": f"Bearer {api_key}",
+        "Accept": "text/event-stream",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/daydaylx/codegen-gui",
+        "HTTP-Referer": "https://localhost",
         "X-Title": "CodeGen GUI"
     }
 
-def get_models():
-    response = requests.get(f"{BASE_URL}/models", headers=get_headers())
-    if response.status_code != 200:
-        raise OpenRouterAPIError(f"Fehler beim Laden der Modelle: {response.text}")
-    return response.json()["data"]
-
-def generate_code_streaming(user_prompt, model, system_prompt="", max_tokens=800):
-    url = f"{BASE_URL}/chat/completions"
-    payload = {
+    body = {
         "model": model,
-        "max_tokens": max_tokens,
         "stream": True,
+        "max_tokens": max_tokens,
+        "temperature": 0.7,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
     }
 
-    with requests.post(url, headers=get_headers(), json=payload, stream=True) as r:
-        if r.status_code != 200:
-            raise OpenRouterAPIError(f"Fehler bei Anfrage: {r.status_code} – {r.text}")
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers=headers,
+        json=body,
+        stream=True
+    )
 
-        for line in r.iter_lines():
-            if line and line.startswith(b'data: '):
-                line_data = line[6:].decode("utf-8")
-                if line_data.strip() == "[DONE]":
-                    break
-                try:
-                    content = json.loads(line_data)["choices"][0]["delta"].get("content", "")
-                    if content:
-                        yield content
-                except Exception:
-                    continue
+    if response.status_code != 200:
+        raise OpenRouterAPIError(f"Fehler bei Anfrage: {response.status_code} - {response.text}")
+
+    client = sseclient.SSEClient(response)
+    for event in client.events():
+        if event.data.strip() == "[DONE]":
+            break
+        try:
+            data = event.data
+            chunk = eval(data)  # OpenRouter sendet rohes JSON – eval = quick & dirty (kann ersetzt werden)
+            content = chunk["choices"][0]["delta"].get("content", "")
+            if content:
+                yield content
+        except Exception as e:
+            continue  # Ignoriere fehlerhafte Chunks

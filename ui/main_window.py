@@ -1,14 +1,18 @@
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QPlainTextEdit, QLineEdit, QCheckBox, QSpinBox, QStatusBar, QMessageBox,
-    QSplitter, QFrame
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QLabel, QPushButton, QTextEdit, QPlainTextEdit, QListWidget, QListWidgetItem,
+    QLineEdit, QCheckBox, QFrame, QFileDialog, QMessageBox, QStatusBar, QSpinBox
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+
 from ui.components.model_dropdown import ModelDropdown
 from ui.components.prompt_input import PromptInput
 from ui.components.code_output import CodeOutput
+
+from core.file_utils import save_text_to_file, copy_to_clipboard
 from core.settings_manager import load_settings, save_settings
-from core.context_utils import get_available_output_tokens, is_prompt_within_limit
+from core.context_utils import is_prompt_within_limit, get_available_output_tokens
 from api.openrouter import generate_code_streaming
 
 class MainWindow(QMainWindow):
@@ -17,27 +21,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("💻 CodeGen Pro")
         self.setMinimumSize(1200, 800)
 
-        # Theme laden
-        try:
-            with open("style_dark.qss", "r") as f:
-                self.setStyleSheet(f.read())
-        except FileNotFoundError:
-            pass
+        with open("style_dark.qss", "r") as f:
+            self.setStyleSheet(f.read())
 
         self.settings = load_settings()
-        self.sidebar_visible = True
 
-        # === Zentrales Layout ===
+        # Layout: Sidebar + Content
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
-
-        # Sidebar-Button links oben
-        sidebar_button_layout = QVBoxLayout()
-        self.sidebar_toggle = QPushButton("☰")
-        self.sidebar_toggle.setFixedWidth(30)
-        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
-        sidebar_button_layout.addWidget(self.sidebar_toggle)
-        sidebar_button_layout.addStretch()
 
         # === Sidebar ===
         self.sidebar = QFrame()
@@ -56,14 +47,18 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.model_dropdown)
 
         self.expert_toggle = QCheckBox("🛠️ Expertenmodus")
-        self.expert_toggle.setChecked(False)
         sidebar_layout.addWidget(self.expert_toggle)
 
         self.max_token_box = QSpinBox()
-        self.max_token_box.setRange(100, 16000)
-        self.max_token_box.setValue(800)
-        sidebar_layout.addWidget(QLabel("Max Tokens"))
+        self.max_token_box.setRange(1, 32000)
+        self.max_token_box.setValue(1024)
+        sidebar_layout.addWidget(QLabel("Max Tokens (nur im Expertenmodus)"))
         sidebar_layout.addWidget(self.max_token_box)
+
+        self.theme_toggle = QCheckBox("🌗 Dark Mode")
+        self.theme_toggle.setChecked(self.settings.get("theme") == "dark")
+        self.theme_toggle.stateChanged.connect(self.toggle_theme)
+        sidebar_layout.addWidget(self.theme_toggle)
 
         sidebar_layout.addStretch()
 
@@ -71,7 +66,9 @@ class MainWindow(QMainWindow):
         self.generate_button.clicked.connect(self.on_generate)
         sidebar_layout.addWidget(self.generate_button)
 
-        # === Content ===
+        main_layout.addWidget(self.sidebar)
+
+        # === Content Bereich ===
         content_frame = QFrame()
         content_frame.setObjectName("Content")
         content_layout = QVBoxLayout(content_frame)
@@ -85,18 +82,13 @@ class MainWindow(QMainWindow):
         splitter.setSizes([350, 450])
 
         content_layout.addWidget(splitter)
-
-        # Layout-Zusammenbau
-        main_layout.addLayout(sidebar_button_layout)
-        main_layout.addWidget(self.sidebar)
         main_layout.addWidget(content_frame)
 
+        # === Statusbar ===
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
-        self.setCentralWidget(main_widget)
 
-    def toggle_sidebar(self):
-        self.sidebar.setVisible(not self.sidebar.isVisible())
+        self.setCentralWidget(main_widget)
 
     def on_generate(self):
         model = self.model_dropdown.get_selected_model()
@@ -120,13 +112,19 @@ class MainWindow(QMainWindow):
         self.settings["last_model"] = model
         save_settings(self.settings)
 
-        self.statusBar().showMessage("⏳ Anfrage wird gestreamt …")
+        self.code_output.set_output("")
+        self.statusBar().showMessage("⏳ Antwort wird gestreamt …")
 
-        self.code_output.set_output("")  # Reset
         try:
             for chunk in generate_code_streaming(user_prompt, model, system_prompt, max_tokens):
                 self.code_output.append_output(chunk)
-            self.statusBar().showMessage("✅ Antwort empfangen.")
+            self.statusBar().showMessage("✅ Antwort vollständig.")
         except Exception as e:
             QMessageBox.critical(self, "Fehler", str(e))
             self.statusBar().showMessage("❌ Anfrage fehlgeschlagen.")
+
+    def toggle_theme(self):
+        theme = "dark" if self.theme_toggle.isChecked() else "light"
+        self.settings["theme"] = theme
+        save_settings(self.settings)
+        QMessageBox.information(self, "Theme gewechselt", "Bitte Anwendung neu starten für Theme-Wechsel.")

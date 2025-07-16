@@ -1,30 +1,20 @@
-# core/context_utils.py
-# Kontext-Tools für Tokenzählung und Promptvalidierung
+def count_tokens(prompt: str, system: str = "") -> int:
+    # Sehr einfache Token-Schätzung: ca. 1 Token pro 4 Zeichen
+    return int((len(prompt) + len(system)) / 4)
 
-try:
-    import tiktoken
-    def count_tokens(user_prompt: str, system_prompt: str = "", model: str = "gpt-3.5-turbo") -> int:
-        combined = (system_prompt + "\n" + user_prompt).strip()
-        enc = tiktoken.encoding_for_model(model)
-        return len(enc.encode(combined))
-except ImportError:
-    def count_tokens(user_prompt: str, system_prompt: str = "", model: str = "gpt-3.5-turbo") -> int:
-        # Fallback ohne tiktoken
-        approx = len((system_prompt + user_prompt).split())
-        return int(approx * 1.3)
+def is_prompt_within_limit(prompt: str, system: str, model_id: str) -> bool:
+    return count_tokens(prompt, system) < get_model_max_tokens(model_id)
 
-def is_prompt_within_limit(user_prompt: str, system_prompt: str = "", model: str = "gpt-3.5-turbo", limit: int = 8192) -> bool:
-    return count_tokens(user_prompt, system_prompt, model) <= limit
+def get_available_output_tokens(prompt: str, system: str, model_id: str) -> int:
+    used = count_tokens(prompt, system)
+    return get_model_max_tokens(model_id) - used
 
-def get_available_output_tokens(user_prompt, system_prompt, model_id):
-    from api.openrouter import get_model_metadata
-    from core.tokenizer import count_tokens  # oder dein Tokenizer-Modul
+def get_model_max_tokens(model_id: str) -> int:
+    MODEL_LIMITS = {
+        "openai/gpt-3.5-turbo": 4096,
+        "openai/gpt-4": 8192,
+        "openrouter/auto": 4096,
+    }
 
-    meta = get_model_metadata(model_id)
-    context_limit = meta.get("context_length", 4096)
-
-    input_tokens = count_tokens(user_prompt) + count_tokens(system_prompt or "")
-    buffer = 64  # Sicherheitsabstand
-    max_output_tokens = max(context_limit - input_tokens - buffer, 256)
-
-    return max_output_tokens
+    # Fallback-Wert, wenn Modell nicht bekannt ist
+    return MODEL_LIMITS.get(model_id, 4096)
